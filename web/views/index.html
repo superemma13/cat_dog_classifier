@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cat vs Dog Classifier</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Cat vs Dog Classifier</h1>
+        
+        <div class="upload-section">
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="file-input-container">
+                    <input type="file" id="imageInput" name="image" accept="image/*" required>
+                    <label for="imageInput" class="custom-file-input">Choose an image</label>
+                </div>
+                <button type="submit" class="submit-btn">Classify Image</button>
+            </form>
+        </div>
+
+        <div id="preview-container" class="hidden">
+            <h2>Preview</h2>
+            <img id="imagePreview" src="" alt="Preview">
+        </div>
+
+        <div id="result" class="hidden">
+            <h2>Result</h2>
+            <div class="result-content">
+                <p>Prediction: <span id="prediction"></span></p>
+                <p>Confidence: <span id="confidence"></span>%</p>
+            </div>
+        </div>
+
+        <div class="recent-predictions">
+            <h2>Your Recent Predictions</h2>
+            <p class="session-info">Session ID: <%= userId %></p>
+            <div class="predictions-grid">
+                <% recentPredictions.forEach(function(pred) { %>
+                    <div class="prediction-card">
+                        <div class="image-container">
+                            <img src="/image/<%= pred.id %>" alt="Prediction image">
+                        </div>
+                        <div class="prediction-info">
+                            <p class="prediction"><%= pred.prediction %></p>
+                            <p class="confidence"><%= (pred.confidence * 100).toFixed(1) %>% confident</p>
+                            <p class="timestamp"><%= new Date(pred.timestamp).toLocaleString() %></p>
+                        </div>
+                    </div>
+                <% }); %>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>
