@@ -4,9 +4,17 @@ const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
+
+// Global error handlers to ensure stack traces appear in Vercel logs
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason && reason.stack ? reason.stack : reason);
+});
 
 const app = express();
 const port = 3000;
@@ -110,85 +118,87 @@ app.get('/image/:id', (req, res) => {
 });
 
 app.post('/upload', upload.single('image'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    // Ensure model file exists
-    const modelPath = path.join(__dirname, '..', 'cat_dog_classifier.pkl');
-    if (!fs.existsSync(modelPath)) {
-        console.error('Model file not found:', modelPath);
-        return res.status(500).json({ error: 'Model file not found' });
-    }
-
-    const pythonScriptPath = path.join(__dirname, '..', 'predict_image_rf.py');
-    if (!fs.existsSync(pythonScriptPath)) {
-        console.error('Python script not found:', pythonScriptPath);
-        return res.status(500).json({ error: 'Prediction script not found' });
-    }
-
-    // Create a temporary file
-    const tempFilePath = path.join(os.tmpdir(), `temp-${Date.now()}.jpg`);
-    fs.writeFileSync(tempFilePath, req.file.buffer);
-
-    const pythonProcess = spawn('python', [
-        pythonScriptPath,
-        tempFilePath
-    ]);
-
-    let predictionData = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-        predictionData += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-        console.error(`Python Error: ${data}`);
-        if (!res.headersSent) {
-            res.status(500).json({ error: `Python Error: ${data}` });
-        }
-    });
-
-    pythonProcess.on('close', (code) => {
-        // Clean up the temporary file
-        fs.unlinkSync(tempFilePath);
-
-        if (code !== 0) {
-            return res.status(500).json({ error: 'Prediction failed' });
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        // Parse prediction result
-        const match = predictionData.match(/->\s*(CAT|DOG)\s*\(confidence:\s*([\d.]+)/);
-        if (match) {
-            const [_, prediction, confidence] = match;
-            
-            // Save to database with user_id and image data
-            db.run(
-                'INSERT INTO predictions (user_id, prediction, confidence, image_data, mime_type) VALUES (?, ?, ?, ?, ?)',
-                [
-                    req.session.userId,
-                    prediction,
-                    parseFloat(confidence),
-                    req.file.buffer,
-                    req.file.mimetype
-                ],
-                (err) => {
-                    if (err) {
-                        console.error('Database error:', err);
+        // Quick environment note for logs
+        if (process.env.VERCEL) {
+            console.log('Running in Vercel environment - note: Python & local storage may be unavailable');
+        }
+
+        // Check for Python availability (serverless environments often don't provide it)
+        const pythonCheck = spawnSync('python', ['--version'], { encoding: 'utf8' });
+        if (pythonCheck.error || pythonCheck.status !== 0) {
+            console.error('Python runtime not available or returned error:', pythonCheck.error || pythonCheck.stderr || pythonCheck.stdout);
+            return res.status(501).json({ error: 'Python runtime not available in this environment. Deploy backend to a full server that supports Python.' });
+        }
+
+        // Ensure model file exists
+        const modelPath = path.join(__dirname, '..', 'cat_dog_classifier.pkl');
+        if (!fs.existsSync(modelPath)) {
+            console.error('Model file not found:', modelPath);
+            return res.status(500).json({ error: 'Model file not found' });
+        }
+
+        const pythonScriptPath = path.join(__dirname, '..', 'predict_image_rf.py');
+        if (!fs.existsSync(pythonScriptPath)) {
+            console.error('Python script not found:', pythonScriptPath);
+            return res.status(500).json({ error: 'Prediction script not found' });
+        }
+
+        // Create a temporary file from the uploaded buffer
+        const tempFilePath = path.join(os.tmpdir(), `temp-${Date.now()}.jpg`);
+        fs.writeFileSync(tempFilePath, req.file.buffer);
+
+        const pythonProcess = spawn('python', [pythonScriptPath, tempFilePath]);
+
+        let predictionData = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+            predictionData += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+            console.error('Python Error (stderr):', data.toString());
+        });
+
+        pythonProcess.on('close', (code) => {
+            // Clean up the temporary file
+            try { fs.unlinkSync(tempFilePath); } catch (e) { /* ignore */ }
+
+            if (code !== 0) {
+                console.error('Python process exited with code', code);
+                return res.status(500).json({ error: 'Prediction failed' });
+            }
+
+            // Parse prediction result
+            const match = predictionData.match(/->\s*(CAT|DOG)\s*\(confidence:\s*([\d.]+)/);
+            if (match) {
+                const [_, prediction, confidence] = match;
+
+                // Save to database with user_id and image data
+                db.run(
+                    'INSERT INTO predictions (user_id, prediction, confidence, image_data, mime_type) VALUES (?, ?, ?, ?, ?)',
+                    [req.session.userId, prediction, parseFloat(confidence), req.file.buffer, req.file.mimetype],
+                    (err) => {
+                        if (err) {
+                            console.error('Database error:', err);
+                        }
                     }
-                }
-            );
+                );
 
-            res.json({
-                success: true,
-                prediction: prediction,
-                confidence: parseFloat(confidence),
-                filename: req.file.filename
-            });
-        } else {
-            res.status(500).json({ error: 'Could not parse prediction result' });
-        }
-    });
+                return res.json({ success: true, prediction: prediction, confidence: parseFloat(confidence) });
+            } else {
+                console.error('Could not parse prediction output:', predictionData);
+                return res.status(500).json({ error: 'Could not parse prediction result' });
+            }
+        });
+    } catch (err) {
+        console.error('Upload handler error:', err && err.stack ? err.stack : err);
+        return res.status(500).json({ error: 'Internal server error', detail: err.message });
+    }
 });
 
 // Handle errors
