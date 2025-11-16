@@ -31,7 +31,10 @@ app.use(session({
 app.engine('html', require('ejs').renderFile);
 app.set('view engine', 'html');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.static('public'));
+// Serve static files from the `public` folder relative to this script.
+// Using an absolute path (based on __dirname) avoids issues when the process
+// working directory differs between local and serverless environments.
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure multer for memory storage
 const upload = multer({
