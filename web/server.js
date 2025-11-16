@@ -45,24 +45,39 @@ const upload = multer({
 });
 
 // Initialize SQLite database with user_id and image blob
-const dbPath = 'predictions.db';
-
-// Check if we need to migrate the database
-let needsMigration = false;
-if (fs.existsSync(dbPath)) {
-    const tempDb = new sqlite3.Database(dbPath);
-    tempDb.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='predictions'", [], (err, row) => {
-        if (row && (!row.sql.includes('user_id') || !row.sql.includes('image_data'))) {
-            console.log('Old database schema detected, recreating database...');
-            tempDb.close();
-            fs.unlinkSync(dbPath);
-            needsMigration = true;
-        }
-    });
-    tempDb.close();
+// Choose a safe DB path:
+// - If PREDICTIONS_DB_PATH env var is set, use it
+// - If running on serverless (VERCEL env), use the system temp dir (writable but ephemeral)
+// - Otherwise use a local file inside the web folder
+const envDbPath = process.env.PREDICTIONS_DB_PATH;
+let dbFile;
+if (envDbPath) {
+    dbFile = envDbPath;
+} else if (process.env.VERCEL) {
+    dbFile = path.join(os.tmpdir(), 'predictions.db');
+} else {
+    // prefer a file next to the server script so local dev uses a predictable path
+    dbFile = path.join(__dirname, 'predictions.db');
 }
 
-const db = new sqlite3.Database(dbPath);
+console.log('Using SQLite DB path:', dbFile);
+
+// Try to open the DB; if it fails (permissions, readonly FS), fall back to in-memory DB
+let db;
+try {
+    db = new sqlite3.Database(dbFile, (err) => {
+        if (err) {
+            console.error('Failed to open SQLite DB at', dbFile, '-', err);
+            console.warn('Falling back to in-memory SQLite database (no persistence)');
+            db = new sqlite3.Database(':memory:');
+        }
+    });
+} catch (err) {
+    console.error('Exception when creating SQLite DB:', err);
+    console.warn('Falling back to in-memory SQLite database (no persistence)');
+    db = new sqlite3.Database(':memory:');
+}
+
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS predictions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
