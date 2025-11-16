@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Determine backend URL. When frontend is hosted on Vercel, set window.BACKEND_URL
+    // (or include a <script> that sets it in index.html). If not set, fall back to same-origin.
+    const backendURL = (window && window.BACKEND_URL) ? window.BACKEND_URL : '';
+
     // Handle form submission
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -27,7 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const formData = new FormData(form);
         
         try {
-            const response = await fetch('/upload', {
+            const url = backendURL ? `${backendURL}/upload` : '/upload';
+            const response = await fetch(url, {
                 method: 'POST',
                 body: formData
             });

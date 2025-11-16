@@ -3,6 +3,7 @@ const session = require('express-session');
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path = require('path');
+const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -35,6 +36,10 @@ app.set('views', path.join(__dirname, 'views'));
 // Using an absolute path (based on __dirname) avoids issues when the process
 // working directory differs between local and serverless environments.
 app.use(express.static(path.join(__dirname, 'public')));
+// Enable CORS so Vercel-hosted frontend can call this backend.
+// If FRONTEND_ORIGIN is set in env, only allow that origin; otherwise allow all origins.
+const frontendOrigin = process.env.FRONTEND_ORIGIN || true;
+app.use(cors({ origin: frontendOrigin, credentials: true }));
 
 // Configure multer for memory storage
 const upload = multer({
